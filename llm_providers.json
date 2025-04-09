@@ -1,0 +1,6 @@
+{
+  "openai": {
+    "apiKey": "your-openai-key",
+    "endpoint": "https://api.openai.com/v1"
+  }
+}

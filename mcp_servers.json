@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": "uvx",
+      "args": ["--directory", "/Users/onebird/github/mcp-servers/weather", "run", "weather.py"]
+    }
+  }
+}
