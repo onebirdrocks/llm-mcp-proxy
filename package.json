@@ -1,23 +1,21 @@
 {
   "name": "llm-mcp-proxy",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "0.1.0",
+  "main": "llm_mcp_proxy/index.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "ts-node src/server.ts"
+    "dev": "ts-node-dev --respawn ./llm_mcp_proxy/index.ts",
+    "build": "tsc"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "dotenv": "^16.4.7",
-    "fastify": "^5.2.2",
-    "openai": "^4.93.0"
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.6.7",
+    "dotenv": "^16.5.0",
+    "fastify": "^4.0.0",
+    "openai": "^4.28.4",
+    "ollama": "^0.5.14"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.2.0"
   }
 }
