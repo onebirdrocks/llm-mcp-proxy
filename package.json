@@ -1,22 +1,43 @@
 {
   "name": "llm-mcp-proxy",
-  "version": "0.0.3",
-  "main": "llm_mcp_proxy/index.ts",
+  "version": "0.0.5",
+  "description": "A unified proxy server for LLM providers and MCP servers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "dev": "ts-node-dev --respawn ./llm_mcp_proxy/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "dev": "ts-node llm_mcp_proxy/index.ts",
+    "start": "node dist/index.js",
+    "test": "./test_api.sh",
+    "prepare": "npm run build"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "llm",
+    "mcp",
+    "proxy",
+    "openai",
+    "anthropic",
+    "deepseek",
+    "ollama"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "@modelcontextprotocol/sdk": "^1.9.0",
-    "axios": "^1.6.7",
-    "dotenv": "^16.5.0",
-    "fastify": "^4.0.0",
-    "ollama": "^0.5.14",
+    "@anthropic-ai/sdk": "^0.18.0",
+    "@modelcontextprotocol/sdk": "^0.1.0",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.26.2",
+    "ollama": "^0.4.9",
     "openai": "^4.28.4"
   },
   "devDependencies": {
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.2.0"
+    "@types/node": "^20.11.24",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   }
 }

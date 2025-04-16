@@ -1,12 +1,22 @@
 {
   "compilerOptions": {
-    "target": "es2020",
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "target": "ES2020",
+    "module": "CommonJS",
+    "lib": ["ES2020"],
+    "declaration": true,
+    "outDir": "./dist",
+    "rootDir": "./llm_mcp_proxy",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node"
   },
-  "include": ["llm_mcp_proxy/**/*.ts"]
+  "include": [
+    "llm_mcp_proxy/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

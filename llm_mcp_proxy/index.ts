@@ -1,33 +1,60 @@
 import 'dotenv/config';
-import Fastify from 'fastify';
+import Fastify, { FastifyInstance } from 'fastify';
 import chatRoutes from './routes/chat';
 import modelsRoutes from './routes/models';
 import mcpRoutes from './routes/mcp';
 import { loadMCPClientByConfig } from './utils/mcp';
 import { initializeMCP } from './providers';
+import { MCPConfig } from './utils/mcp';
 
-const server = Fastify({ logger: true });
+export interface ServerConfig {
+  port?: number;
+  mcpConfig?: MCPConfig;
+}
 
-// 异步初始化服务器
-async function initServer() {
+export interface Server {
+  url: string;
+  close: () => Promise<void>;
+}
+
+export async function createServer(config: ServerConfig = {}): Promise<Server> {
+  const server = Fastify({ logger: true });
+  const port = config.port || 3000;
+
   try {
-    // 加载 MCP 配置
-    const config = await loadMCPClientByConfig();
-    
-    // 初始化 MCP
-    initializeMCP(config);
+    // 如果提供了 MCP 配置，则初始化它
+    if (config.mcpConfig) {
+      initializeMCP(config.mcpConfig);
+    } else {
+      // 尝试从配置文件加载
+      const mcpConfig = await loadMCPClientByConfig();
+      if (mcpConfig) {
+        initializeMCP(mcpConfig);
+      }
+    }
 
     server.register(chatRoutes, { prefix: '/v1/chat' });
     server.register(modelsRoutes, { prefix: '/v1' });
     server.register(mcpRoutes, { prefix: '/v1' });
 
-    await server.listen({ port: 3000 });
-    console.log(`🚀 Server ready at ${server.server.address()}`);
+    await server.listen({ port });
+    
+    return {
+      url: `http://localhost:${port}`,
+      close: async () => {
+        await server.close();
+      }
+    };
   } catch (err) {
     console.error(err);
-    process.exit(1);
+    throw err;
   }
 }
 
-// 启动服务器
-initServer();
+// 如果直接运行此文件，则启动服务器
+if (require.main === module) {
+  createServer().catch(err => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

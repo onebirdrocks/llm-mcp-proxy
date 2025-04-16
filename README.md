@@ -14,13 +14,50 @@ A unified proxy server that integrates multiple LLM (Large Language Model) provi
 - Standardized model listing and information
 - Easy integration with new providers
 
-## Prerequisites
-
-- Node.js (v18 or higher)
-- npm (v8 or higher)
-- Ollama (optional, for local models)
-
 ## Installation
+
+### As a dependency in your project
+
+```bash
+npm install llm-mcp-proxy
+```
+
+### Usage in Code
+
+```typescript
+import { createServer } from 'llm-mcp-proxy';
+
+// Create MCP configuration
+const mcpConfig = {
+  mcpServers: {
+    'ebook-mcp': {
+      command: 'python',
+      args: ['-m', 'your_mcp_server']
+    }
+  }
+};
+
+// Start the server
+const server = await createServer({
+  port: 3000,  // optional, default is 3000
+  mcpConfig    // optional, if you need MCP support
+});
+
+// Server is now running at http://localhost:3000
+console.log(`Server is running at ${server.url}`);
+
+// To stop the server
+await server.close();
+```
+
+Required environment variables:
+```env
+OPENAI_API_KEY=your_openai_api_key      # If using OpenAI
+DEEPSEEK_API_KEY=your_deepseek_api_key  # If using DeepSeek
+ANTHROPIC_API_KEY=your_anthropic_api_key # If using Anthropic
+```
+
+### As a standalone server
 
 1. Clone the repository:
 ```bash
