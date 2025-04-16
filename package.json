@@ -1,6 +1,6 @@
 {
   "name": "llm-mcp-proxy",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "main": "llm_mcp_proxy/index.ts",
   "scripts": {
     "dev": "ts-node-dev --respawn ./llm_mcp_proxy/index.ts",
