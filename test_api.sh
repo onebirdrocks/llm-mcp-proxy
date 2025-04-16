@@ -188,6 +188,22 @@ test_stream_chat_api() {
     echo
 }
 
+# 测试 MCP Tools API
+test_mcp_tools_api() {
+    info "Testing MCP Tools API..."
+
+    info "Getting ebook-mcp tools"
+    curl -s -X GET "http://localhost:3000/v1/mcp/ebook-mcp/tools" \
+        -H "Content-Type: application/json"
+    echo
+
+    # 测试不存在的 MCP 服务器
+    info "Testing non-existent MCP server"
+    curl -s -X GET "http://localhost:3000/v1/mcp/nonexistent/tools" \
+        -H "Content-Type: application/json"
+    echo
+}
+
 main() {
     info "Starting API tests..."
     
@@ -201,6 +217,7 @@ main() {
     test_models_api
     test_chat_api
     test_stream_chat_api
+    test_mcp_tools_api
     
     success "All tests completed!"
 }
