@@ -7,6 +7,7 @@ declare module '@modelcontextprotocol/sdk/client/index.js' {
   export class Client {
     constructor(config: ClientConfig);
     connect(transport: any): Promise<void>;
+    listTools(): Promise<any[]>;
     listPrompts(): Promise<any[]>;
     getPrompt(params: { name: string; arguments: Record<string, any> }): Promise<any>;
     listResources(): Promise<any[]>;
