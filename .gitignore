@@ -21,6 +21,14 @@ yarn-error.log*
 .AppleDouble
 .LSOverride
 
+*.py
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+
 # Thumbnails
 ._*
 
