@@ -81,6 +81,13 @@ export class OpenAIProvider implements BaseProvider {
         const meta = openaiMeta.find(m => m.model_id === model.id);
         return meta?.mode === 'chat' && (!meta.deprecation_date || new Date(meta.deprecation_date) > currentDate);
       })
-      .map(m => ({ id: m.id, provider: 'openai' }));
+      .map(m => {
+        const meta = openaiMeta.find(item => item.model_id === m.id);
+        return {
+          id: m.id,
+          provider: 'openai',
+          ...meta
+        };
+      });
   }
 }

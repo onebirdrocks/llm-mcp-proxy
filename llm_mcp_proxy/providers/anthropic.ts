@@ -53,7 +53,8 @@ export class AnthropicProvider implements BaseProvider {
       .filter(model => model.mode === 'chat' && (!model.deprecation_date || new Date(model.deprecation_date) > currentDate))
       .map(model => ({
         id: model.model_id,
-        provider: 'anthropic'
+        provider: 'anthropic',
+        ...model
       }));
   }
 }

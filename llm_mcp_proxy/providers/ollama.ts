@@ -1,4 +1,5 @@
 import { BaseProvider, ChatParams, Message, ListModelsParams } from './types';
+import modelsMeta from '../models_meta.json';
 
 interface OllamaModel {
   name: string;
@@ -129,28 +130,21 @@ export class OllamaProvider implements BaseProvider {
       }
 
       const currentDate = new Date();
+      const ollamaMeta = modelsMeta.ollama || [];
 
       return models
         .filter((model: any) => {
-          // 检查 mode 是否为 chat
-          if (model.mode && model.mode !== 'chat') {
-            return false;
-          }
-
-          // 检查 deprecation_date
-          if (model.deprecation_date) {
-            const deprecationDate = new Date(model.deprecation_date);
-            if (deprecationDate <= currentDate) {
-              return false;
-            }
-          }
-
-          return true;
+          const meta = ollamaMeta.find(m => m.model_id === model.name);
+          return meta?.mode === 'chat' && (!meta.deprecation_date || new Date(meta.deprecation_date) > currentDate);
         })
-        .map((model: OllamaModel) => ({
-          id: model.name,
-          provider: 'ollama'
-        }));
+        .map((model: OllamaModel) => {
+          const meta = ollamaMeta.find(item => item.model_id === model.name);
+          return {
+            id: model.name,
+            provider: 'ollama',
+            ...meta
+          };
+        });
     } catch (error: any) {
       if (error.code === 'ECONNREFUSED') {
         throw new Error('Failed to connect to Ollama server. Please make sure Ollama is running on port 11434');
