@@ -34,7 +34,7 @@ export async function createServer(config: ServerConfig = {}): Promise<Server> {
     }
 
     // 为所有路由添加 /v1 前缀
-    await server.register(chatRoutes, { prefix: '/v1' });
+    await server.register(chatRoutes, { prefix: '/v1/chat' });
     await server.register(modelsRoutes, { prefix: '/v1' });
     await server.register(mcpRoutes, { prefix: '/v1' });
 

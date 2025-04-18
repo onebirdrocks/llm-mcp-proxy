@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { BaseProvider, ChatParams } from './types';
 import type { Message as BaseMessage } from './types';
 import type { Message } from '../types';
+import modelsMeta from '../models_meta.json';
 
 type AnthropicMessage = {
   role: 'user' | 'assistant';
@@ -45,6 +46,14 @@ export class AnthropicProvider implements BaseProvider {
   }
 
   async listModels() {
-    return [{ id: 'claude-3-haiku-20240307', provider: 'anthropic' }];
+    const currentDate = new Date();
+    const anthropicMeta = modelsMeta.anthropic || [];
+
+    return anthropicMeta
+      .filter(model => model.mode === 'chat' && (!model.deprecation_date || new Date(model.deprecation_date) > currentDate))
+      .map(model => ({
+        id: model.model_id,
+        provider: 'anthropic'
+      }));
   }
 }

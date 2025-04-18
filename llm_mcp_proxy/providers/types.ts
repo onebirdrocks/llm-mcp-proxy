@@ -9,6 +9,7 @@ export interface ChatParams {
   apiKey?: string;  // API Key 可选参数
   isYolo?: boolean;
   mcpServerNames?: string[];
+  stream?: boolean;  // 添加 stream 参数
 }
 
 export interface Message {

@@ -217,7 +217,7 @@ test_stream_chat_api() {
         -H "Content-Type: application/json" \
         -d "{
             \"provider\": \"ollama\",
-            \"model\": \"llama2\",
+            \"model\": \"qwq\",
             \"messages\": [{\"role\": \"user\", \"content\": \"$test_prompt\"}],
             \"stream\": true
         }"

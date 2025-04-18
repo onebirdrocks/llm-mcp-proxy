@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { BaseProvider, ChatParams } from './types';
 import { Message } from '../types';
+import modelsMeta from '../models_meta.json';
 
 export class OpenAIProvider implements BaseProvider {
   async chat({ model, messages, apiKey }: ChatParams) {
@@ -72,6 +73,14 @@ export class OpenAIProvider implements BaseProvider {
   async listModels() {
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const res = await client.models.list();
-    return res.data.map(m => ({ id: m.id, provider: 'openai' }));
+    const currentDate = new Date();
+    const openaiMeta = modelsMeta.openai || [];
+
+    return res.data
+      .filter(model => {
+        const meta = openaiMeta.find(m => m.model_id === model.id);
+        return meta?.mode === 'chat' && (!meta.deprecation_date || new Date(meta.deprecation_date) > currentDate);
+      })
+      .map(m => ({ id: m.id, provider: 'openai' }));
   }
 }

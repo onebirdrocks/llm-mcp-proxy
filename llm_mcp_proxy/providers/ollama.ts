@@ -1,5 +1,4 @@
-import { BaseProvider, ChatParams } from './types';
-import { Message } from '../types';
+import { BaseProvider, ChatParams, Message, ListModelsParams } from './types';
 
 interface OllamaModel {
   name: string;
@@ -8,41 +7,30 @@ interface OllamaModel {
 }
 
 export class OllamaProvider implements BaseProvider {
-  private client: any = null;
-  private initPromise: Promise<void> | null = null;
+  private client: any;
 
-  private async initialize() {
-    if (!this.initPromise) {
-      this.initPromise = (async () => {
-        const { Ollama } = await import('ollama');
-        this.client = new Ollama({
-          host: 'http://localhost:11434'
-        });
-      })();
-    }
-    await this.initPromise;
+  async initialize() {
+    const ollama = await import('ollama');
+    this.client = ollama.default;
   }
 
-  async chat({ model, messages }: ChatParams) {
-    try {
+  async chat(params: ChatParams) {
+    if (!this.client) {
       await this.initialize();
-      const response = await this.client.chat({
-        model,
-        messages: messages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        }))
-      });
-      return response;
-    } catch (error: any) {
-      if (error.code === 'ECONNREFUSED') {
-        throw new Error('Failed to connect to Ollama server. Please make sure Ollama is running on port 11434');
-      }
-      throw error;
     }
+
+    const response = await this.client.chat({
+      model: params.model,
+      messages: params.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+    });
+
+    return response;
   }
 
-  async chatStream({ model, messages }: ChatParams, stream: NodeJS.WritableStream) {
+  async chatStream(params: ChatParams, stream: NodeJS.WritableStream) {
     try {
       await this.initialize();
       let streamEnded = false;
@@ -89,8 +77,8 @@ export class OllamaProvider implements BaseProvider {
 
       try {
         const response = await this.client.chat({
-          model,
-          messages: messages.map(msg => ({
+          model: params.model,
+          messages: params.messages.map(msg => ({
             role: msg.role,
             content: msg.content
           })),
@@ -101,7 +89,7 @@ export class OllamaProvider implements BaseProvider {
           if (streamEnded) break;
 
           const event = {
-            model,
+            model: params.model,
             created_at: new Date().toISOString(),
             message: {
               role: 'assistant',
@@ -125,23 +113,50 @@ export class OllamaProvider implements BaseProvider {
     }
   }
 
-  async listModels() {
+  async listModels(params?: ListModelsParams) {
     try {
       await this.initialize();
-      const models = await this.client.list();
-      return Object.values(models.models as Record<string, OllamaModel>).map((model: OllamaModel) => ({
-        id: model.name.split(':')[0], // Remove ':latest' suffix
-        name: model.name,
-        provider: 'ollama',
-        size: model.size,
-        modified: model.modified_at ? new Date(model.modified_at).toISOString() : null
-      }));
+      const response = await this.client.list();
+      
+      // 添加调试日志
+      console.log('Ollama response:', JSON.stringify(response, null, 2));
+
+      const models = Array.isArray(response.models) ? response.models : response;
+      
+      if (!Array.isArray(models)) {
+        console.error('Unexpected response format from Ollama:', models);
+        throw new Error('Invalid response format from Ollama');
+      }
+
+      const currentDate = new Date();
+
+      return models
+        .filter((model: any) => {
+          // 检查 mode 是否为 chat
+          if (model.mode && model.mode !== 'chat') {
+            return false;
+          }
+
+          // 检查 deprecation_date
+          if (model.deprecation_date) {
+            const deprecationDate = new Date(model.deprecation_date);
+            if (deprecationDate <= currentDate) {
+              return false;
+            }
+          }
+
+          return true;
+        })
+        .map((model: OllamaModel) => ({
+          id: model.name,
+          provider: 'ollama'
+        }));
     } catch (error: any) {
       if (error.code === 'ECONNREFUSED') {
         throw new Error('Failed to connect to Ollama server. Please make sure Ollama is running on port 11434');
       }
       console.error('Error fetching models from Ollama:', error);
-      throw new Error(`Failed to fetch models from Ollama: ${error.message}`);
+      throw error;
     }
   }
 }
