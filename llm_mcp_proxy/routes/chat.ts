@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { getProviderByName } from '../providers';
+import { getLLMProviderByName } from '../providers';
 
 const chatRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/completions', async (request, reply) => {
@@ -22,7 +22,7 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const providerHandler = getProviderByName(provider);
+    const providerHandler = getLLMProviderByName(provider);
     if (!providerHandler) {
       return reply.code(400).send({ error: 'Unknown provider' });
     }

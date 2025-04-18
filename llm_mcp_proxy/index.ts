@@ -33,11 +33,12 @@ export async function createServer(config: ServerConfig = {}): Promise<Server> {
       }
     }
 
-    server.register(chatRoutes, { prefix: '/v1/chat' });
-    server.register(modelsRoutes, { prefix: '/v1' });
-    server.register(mcpRoutes, { prefix: '/v1' });
+    // 注册路由，不使用前缀，让每个路由模块自己控制完整路径
+    await server.register(chatRoutes);
+    await server.register(modelsRoutes);
+    await server.register(mcpRoutes, { prefix: '/v1' });
 
-    await server.listen({ port });
+    await server.listen({ port, host: '0.0.0.0' });
     
     return {
       url: `http://localhost:${port}`,

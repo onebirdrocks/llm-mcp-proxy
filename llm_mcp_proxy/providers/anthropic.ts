@@ -1,18 +1,31 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseProvider, ChatParams } from './types';
-import { Message } from '../types';
+import type { Message as BaseMessage } from './types';
+import type { Message } from '../types';
+
+type AnthropicMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+function convertMessages(messages: Message[] | BaseMessage[]): AnthropicMessage[] {
+  return messages.filter(msg => msg.role !== 'system').map(msg => ({
+    role: msg.role === 'assistant' || msg.role === 'user' ? msg.role : 'user',
+    content: msg.content
+  }));
+}
 
 export class AnthropicProvider implements BaseProvider {
   async chat({ model, messages, apiKey }: ChatParams) {
     const client = new Anthropic({ apiKey });
-    return client.messages.create({ model, max_tokens: 1024, messages });
+    return client.messages.create({ model, max_tokens: 1024, messages: convertMessages(messages) });
   }
 
   async chatStream({ model, messages, apiKey }: ChatParams, stream: NodeJS.WritableStream) {
     const client = new Anthropic({ apiKey });
     const encoder = new TextEncoder();
     
-    const res = await client.messages.stream({ model, max_tokens: 1024, messages });
+    const res = await client.messages.stream({ model, max_tokens: 1024, messages: convertMessages(messages) });
     for await (const chunk of res) {
       if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'text_delta') {
         const event = {

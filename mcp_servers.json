@@ -1,13 +1,16 @@
 {
-  "mcpServers": {
-    "ebook-mcp": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/Users/onebird/github/ebook-mcp/src/ebook_mcp/",
-        "run",
-        "main.py"
-      ]
-    }
+  "mcpServers":{
+    
+      "ebook-mcp":{
+          "command": "uv",
+          "args": [
+              "--directory",
+              "/Users/onebird/github/ebook-mcp/src/ebook_mcp/",
+              "run",
+              "main.py"
+          ]
+      }
   }
-} 
+
+
+}

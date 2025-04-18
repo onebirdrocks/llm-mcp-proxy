@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { allProviders, getProviderByName } from '../providers';
+import { allProviders, getLLMProviderByName } from '../providers';
 import modelsMeta from '../models_meta.json';
 
 type ModelsMetaType = typeof modelsMeta;
@@ -39,30 +39,40 @@ function filterDeprecatedModels<T extends ModelMetadata | ModelInfo>(models: T[]
 }
 
 const modelsRoute: FastifyPluginAsync = async (fastify) => {
+  // 获取所有模型元数据
   fastify.get('/v1/models/meta', async (request, reply) => {
-    return modelsMeta;
+    try {
+      return modelsMeta;
+    } catch (error: any) {
+      reply.code(500).send({
+        error: 'Failed to fetch models metadata',
+        details: error.message
+      });
+    }
   });
 
+  // 获取特定提供商的模型元数据
   fastify.get('/v1/models/meta/:provider', async (request, reply) => {
     const { provider } = request.params as { provider: string };
-    const providerInstance = getProviderByName(provider);
     
-    if (!providerInstance) {
-      reply.code(404).send({ error: `Provider ${provider} not found` });
-      return;
-    }
+    try {
+      const providerModels = modelsMeta[provider as ProviderName];
+      if (!providerModels) {
+        reply.code(404).send({ error: `No metadata found for provider ${provider}` });
+        return;
+      }
 
-    const providerModels = modelsMeta[provider as ProviderName];
-    if (!providerModels) {
-      reply.code(404).send({ error: `No metadata found for provider ${provider}` });
-      return;
+      return filterDeprecatedModels(providerModels as ModelMetadata[]);
+    } catch (error: any) {
+      reply.code(500).send({
+        error: `Failed to fetch metadata for provider ${provider}`,
+        details: error.message
+      });
     }
-
-    return filterDeprecatedModels(providerModels as ModelMetadata[]);
   });
 
-  // 获取所有模型的路由
-  fastify.get('/models', async (_request, reply) => {
+  // 获取所有可用模型列表
+  fastify.get('/v1/models', async (request, reply) => {
     try {
       const results = await Promise.allSettled(
         allProviders.map(p => p.listModels())
@@ -86,9 +96,8 @@ const modelsRoute: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      // 过滤掉已过期的模型
       const filteredModels = filterDeprecatedModels(models as ModelInfo[]);
-      reply.send(filteredModels);
+      return filteredModels;
     } catch (error: any) {
       reply.code(500).send({
         error: 'Failed to fetch models',
@@ -97,8 +106,8 @@ const modelsRoute: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // 获取特定提供商模型的路由
-  fastify.get('/models/:provider', async (request, reply) => {
+  // 获取特定提供商的可用模型列表
+  fastify.get('/v1/models/:provider', async (request, reply) => {
     const { provider } = request.params as { provider: string };
     const authHeader = request.headers.authorization;
     let apiKey: string | undefined;
@@ -107,24 +116,25 @@ const modelsRoute: FastifyPluginAsync = async (fastify) => {
       apiKey = authHeader.substring(7);
     }
 
-    const providerInstance = getProviderByName(provider);
-    if (!providerInstance) {
-      return reply.code(400).send({ error: 'Unknown provider' });
-    }
-
-    // 对于需要 API Key 的提供商进行验证
-    if (!apiKey && provider !== 'ollama') {
-      return reply.code(401).send({ 
-        error: 'Authentication failed',
-        message: 'Missing API Key. Please provide your API key in the Authorization header with Bearer scheme.'
-      });
-    }
-
     try {
-      const models = await providerInstance.listModels({ apiKey });
-      // 过滤掉已过期的模型
+      const providerInstance = getLLMProviderByName(provider);
+      if (!providerInstance) {
+        reply.code(404).send({ error: `Provider ${provider} not found` });
+        return;
+      }
+
+      // 对于需要 API Key 的提供商进行验证
+      if (!apiKey && provider !== 'ollama') {
+        reply.code(401).send({ 
+          error: 'Authentication failed',
+          message: 'Missing API Key. Please provide your API key in the Authorization header with Bearer scheme.'
+        });
+        return;
+      }
+
+      const models = await providerInstance.listModels({ apiKey, provider });
       const filteredModels = filterDeprecatedModels(models as ModelInfo[]);
-      reply.send(filteredModels);
+      return filteredModels;
     } catch (error: any) {
       reply.code(500).send({
         error: `Failed to fetch models from ${provider}`,

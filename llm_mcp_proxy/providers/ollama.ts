@@ -1,18 +1,31 @@
-import { Ollama, ListResponse, ModelResponse } from 'ollama';
 import { BaseProvider, ChatParams } from './types';
 import { Message } from '../types';
 
-export class OllamaProvider implements BaseProvider {
-  private client: Ollama;
+interface OllamaModel {
+  name: string;
+  size: number;
+  modified_at: string;
+}
 
-  constructor() {
-    this.client = new Ollama({
-      host: 'http://localhost:11434'
-    });
+export class OllamaProvider implements BaseProvider {
+  private client: any = null;
+  private initPromise: Promise<void> | null = null;
+
+  private async initialize() {
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        const { Ollama } = await import('ollama');
+        this.client = new Ollama({
+          host: 'http://localhost:11434'
+        });
+      })();
+    }
+    await this.initPromise;
   }
 
   async chat({ model, messages }: ChatParams) {
     try {
+      await this.initialize();
       const response = await this.client.chat({
         model,
         messages: messages.map(msg => ({
@@ -31,6 +44,7 @@ export class OllamaProvider implements BaseProvider {
 
   async chatStream({ model, messages }: ChatParams, stream: NodeJS.WritableStream) {
     try {
+      await this.initialize();
       let streamEnded = false;
 
       const endStream = () => {
@@ -113,8 +127,9 @@ export class OllamaProvider implements BaseProvider {
 
   async listModels() {
     try {
+      await this.initialize();
       const models = await this.client.list();
-      return Object.values(models.models).map((model: ModelResponse) => ({
+      return Object.values(models.models as Record<string, OllamaModel>).map((model: OllamaModel) => ({
         id: model.name.split(':')[0], // Remove ':latest' suffix
         name: model.name,
         provider: 'ollama',
