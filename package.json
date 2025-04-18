@@ -1,12 +1,13 @@
 {
   "name": "llm-mcp-proxy",
   "version": "0.0.5",
+  "type": "module",
   "description": "A unified proxy server for LLM providers and MCP servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx watch llm_mcp_proxy/index.ts",
+    "dev": "NODE_OPTIONS='--inspect' tsx watch llm_mcp_proxy/index.ts",
     "start": "node dist/index.js",
     "test": "./test_api.sh",
     "prepare": "npm run build"

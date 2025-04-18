@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { BaseProvider, ChatParams, ListModelsParams } from './types';
-import { Message } from '../types';
+import { Message, ModelMeta } from '../types';
 import modelsMeta from '../models_meta.json';
 
 export class DeepSeekProvider implements BaseProvider {
@@ -102,33 +102,12 @@ export class DeepSeekProvider implements BaseProvider {
   }
 
   async listModels(params?: ListModelsParams) {
-    try {
-      // 如果指定了 provider 且不是 'deepseek'，返回空数组
-      if (params?.provider && params.provider !== 'deepseek') {
-        return [];
-      }
-
-      const client = this.createClient(params?.apiKey || process.env.DEEPSEEK_API_KEY!);
-      const response = await client.models.list();
-      const currentDate = new Date();
-      const deepseekMeta = modelsMeta.deepseek || [];
-
-      return response.data
-        .filter(model => {
-          const meta = deepseekMeta.find((m: any) => m.model_id === model.id);
-          return meta?.mode === 'chat' && (!meta.deprecation_date || new Date(meta.deprecation_date) > currentDate);
-        })
-        .map(model => {
-          const meta = deepseekMeta.find((item: any) => item.model_id === model.id);
-          return {
-            id: model.id,
-            provider: 'deepseek',
-            ...meta
-          };
-        });
-    } catch (error: any) {
-      console.error('Error fetching models from DeepSeek:', error);
-      throw new Error(`Failed to fetch models from DeepSeek: ${error.message}`);
-    }
+    const models = modelsMeta.deepseek.filter((m: ModelMeta) => {
+      return m.mode === 'chat' && (!m.deprecation_date || new Date(m.deprecation_date) > new Date());
+    });
+    return models.map((item: ModelMeta) => ({
+      id: item.model_id,
+      provider: 'deepseek'
+    }));
   }
 }

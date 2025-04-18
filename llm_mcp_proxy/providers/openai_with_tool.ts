@@ -16,6 +16,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { BaseProvider, ChatParams, ListModelsParams } from './types';
 import { Stream } from 'openai/streaming';
+import { getMCPClientByName } from '../providers';
 
 /** avoid dead loop */
 const MAX_TOOL_LOOPS = 5;
@@ -64,9 +65,19 @@ export class OpenAIWithToolProvider implements BaseProvider {
     const openai = new OpenAI({ apiKey });
 
     // ✔️ 尝试复用 MCP Client（只有在需要时才实例化）
+    console.log('isYolo', isYolo);
+    console.log('mcpServerNames', mcpServerNames);
     const mcpClients: MCPClientLike[] = isYolo ? mcpServerNames.map(name => ({
-      getToolList: async () => [],
-      invokeTool: async (name: string, args: string) => ({})
+      getToolList: async () => {
+        const client = await getMCPClientByName(name);
+        if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
+        return client.listTools();
+      },
+      invokeTool: async (name: string, args: string) => {
+        const client = await getMCPClientByName(name);
+        if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
+        return client.callTool({ name, arguments: JSON.parse(args) });
+      }
     })) : [];
 
     let loop = 0;
@@ -76,10 +87,60 @@ export class OpenAIWithToolProvider implements BaseProvider {
       const reqStartTs = Date.now();
 
       // 1️⃣ 打开一次 ChatCompletion 流
+      const tools: ChatCompletionTool[] = [];
+      
+      if (isYolo && mcpClients.length > 0) {
+        try {
+          // 获取所有可用工具
+          const toolLists = await Promise.all(mcpClients.map(client => client.getToolList()));
+          // 提取实际的工具数组
+          const allTools = toolLists.flatMap(response => {
+            if (typeof response === 'object' && response !== null && 'tools' in response) {
+              return (response as { tools: any[] }).tools;
+            }
+            return Array.isArray(response) ? response : [];
+          });
+          
+          console.log('Raw tools from MCP:', JSON.stringify(allTools, null, 2));
+          
+          // 转换为 OpenAI 工具格式
+          for (const tool of allTools) {
+            if (!tool.name || !tool.inputSchema) {
+              console.warn('Skipping invalid tool:', tool);
+              continue;
+            }
+            
+            tools.push({
+              type: 'function',
+              function: {
+                name: tool.name,
+                description: tool.description || '',
+                parameters: tool.inputSchema
+              }
+            });
+          }
+          
+          console.log('Converted OpenAI tools:', JSON.stringify(tools, null, 2));
+        } catch (error: any) {
+          console.error('Error fetching tools:', error);
+          send({ type: 'error', message: `Error preparing tools: ${error.message}` });
+          stream.end();
+          return;
+        }
+      }
+
+      if (tools.length === 0) {
+        console.log('No tools available, proceeding without function calling');
+      }
+
       const resp = await openai.chat.completions.create({
         model,
         messages,
         stream: true,
+        ...(tools.length > 0 ? {
+          tools,
+          tool_choice: 'auto'  // 只在有工具时设置 tool_choice
+        } : {})
       });
 
       // ⬇️ 用于暂存本轮 tool 调用
@@ -87,90 +148,66 @@ export class OpenAIWithToolProvider implements BaseProvider {
       let finishedWithToolCalls = false;
 
       // 2️⃣ 逐块解析 & 透传 token
-      const parser = createParser({
-        onEvent(event: EventSourceMessage) {
-          if (event.data === '[DONE]') {
-            return;
-          }
-          try {
-            const data = JSON.parse(event.data);
-            if (data?.choices?.[0]?.delta?.content) {
-              send({ type: 'token', content: data.choices[0].delta.content });
-            }
-            if (data?.choices?.[0]?.delta?.tool_calls) {
-              const customToolCalls = data.choices[0].delta.tool_calls.map((tc: any) => ({
-                id: tc.id || `tool_${Date.now()}`,
-                name: tc.name,
-                arguments: tc.arguments,
-                type: 'function' as const,
-                function: {
-                  name: tc.name,
-                  arguments: tc.arguments
-                }
-              }));
-              toolCalls.push(...customToolCalls);
-            }
-            if (data?.choices?.[0]?.finish_reason === 'tool_calls') {
-              finishedWithToolCalls = true;
-            }
-          } catch (err) {
-            console.error('Error parsing SSE message:', err);
-          }
-        }
-      });
-
       for await (const chunk of resp) {
-        parser.feed(chunk.toString());
+        // 直接转发原始数据
+        stream.write(`data: ${JSON.stringify(chunk)}\n\n`);
+
+        // 处理工具调用
+        if (chunk.choices[0]?.delta?.tool_calls) {
+          const toolCallsData = chunk.choices[0].delta.tool_calls;
+          const customToolCalls = toolCallsData.map((tc: any) => ({
+            id: tc.id || `tool_${Date.now()}`,
+            type: 'function' as const,
+            name: tc.function?.name,
+            arguments: tc.function?.arguments,
+            function: {
+              name: tc.function?.name,
+              arguments: tc.function?.arguments
+            }
+          }));
+          
+          toolCalls.push(...customToolCalls);
+        }
+
+        // 检查完成原因
+        if (chunk.choices[0]?.finish_reason === 'tool_calls') {
+          finishedWithToolCalls = true;
+        }
       }
 
-      /*  ---- 本轮结束，判断是否要进工具 ---- */
       if (!finishedWithToolCalls) {
-        // ✅ 模型正常结束，无需工具；整个对话完成
-        break;
+        stream.end();
+        return;
       }
 
-      // ❌ 模型想用工具，但 isYolo=false
       if (!isYolo) {
         send({ type: 'need_confirm', toolCalls });
         stream.end();
         return;
       }
 
-      // ❌ Yolo 但没有 mcpServer
       if (mcpClients.length === 0) {
         send({ type: 'error', message: 'mcpServerNames 字段为空，无法执行工具' });
         stream.end();
         return;
       }
 
-      // 3️⃣ 执行所有工具（串行；如需并发可 Promise.all）
+      // 执行工具调用
       try {
-        const toolLists = await Promise.all(mcpClients.map(client => client.getToolList()));
-        const allTools = toolLists.flat();
         const toolResults: { name: string; result: any; tool_call_id: string }[] = [];
 
         for (const c of toolCalls) {
-          const meta = allTools.find(t => t.name === c.name);
+          const meta = tools.find(t => t.function.name === c.name);
           if (!meta) {
-            send({
-              type: 'tool_error',
-              name: c.name,
-              message: 'Tool not found on any MCP server',
-            });
+            stream.write(`data: ${JSON.stringify({ type: 'tool_error', name: c.name, message: 'Tool not found' })}\n\n`);
             continue;
           }
-          // 找到包含该工具的客户端
-          const clientIndex = toolLists.findIndex(list => 
-            list.some(tool => tool.name === c.name)
-          );
-          if (clientIndex === -1) continue;
-          
-          const res = await mcpClients[clientIndex].invokeTool(meta.name, c.arguments);
-          toolResults.push({ name: meta.name, result: res, tool_call_id: c.id });
-          send({ type: 'tool_result', name: meta.name, result: res });
+
+          const res = await mcpClients[tools.findIndex(t => t.function.name === c.name)].invokeTool(c.name, c.arguments);
+          toolResults.push({ name: c.name, result: res, tool_call_id: c.id });
+          stream.write(`data: ${JSON.stringify({ type: 'tool_result', name: c.name, result: res })}\n\n`);
         }
 
-        // 4️⃣ 把工具调用 & 结果压到 messages，开启下一轮
         messages.push({
           role: 'assistant',
           content: '',
@@ -186,19 +223,15 @@ export class OpenAIWithToolProvider implements BaseProvider {
           } as ChatCompletionToolMessageParam);
         }
       } catch (e: any) {
-        send({ type: 'tool_error', message: e.message });
+        stream.write(`data: ${JSON.stringify({ type: 'tool_error', message: e.message })}\n\n`);
         stream.end();
         return;
       }
 
-      // 🔄 进入下一循环（继续与模型对话）
       const duration = ((Date.now() - reqStartTs) / 1000).toFixed(1);
-      send({ type: 'loop_info', loop, duration });
+      stream.write(`data: ${JSON.stringify({ type: 'loop_info', loop, duration })}\n\n`);
+      stream.end();
     }
-
-    // 循环完毕 → 通知前端结束
-    send('[DONE]');
-    stream.end();
   }
 }
 
@@ -213,3 +246,56 @@ async function streamToString(stream: Stream<ChatCompletionChunk>): Promise<stri
   }
   return result;
 }
+
+async function testOpenAIStreaming() {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const stream = process.stdout;
+  
+  try {
+    const resp = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [{ role: 'user', content: 'Say "Hello, World!" slowly.' }],
+      stream: true
+    });
+
+    const parser = createParser({
+      onEvent(event: EventSourceMessage) {
+        try {
+          if (event.data === '[DONE]') {
+            stream.write('data: "[DONE]"\n\n');
+            return;
+          }
+
+          const data = JSON.parse(event.data);
+          
+          // 转发内容
+          if (data?.choices?.[0]?.delta?.content) {
+            stream.write(`data: ${JSON.stringify({ content: data.choices[0].delta.content })}\n\n`);
+          }
+
+          // 检查完成原因
+          if (data?.choices?.[0]?.finish_reason) {
+            stream.write(`data: ${JSON.stringify({ finish_reason: data.choices[0].finish_reason })}\n\n`);
+          }
+        } catch (err) {
+          console.error('Error processing chunk:', err);
+        }
+      }
+    });
+
+    for await (const chunk of resp) {
+      parser.feed(chunk.toString());
+    }
+    
+  } catch (error) {
+    console.error('Error in streaming test:', error);
+  }
+}
+
+// 执行测试
+console.log('Starting OpenAI streaming test...');
+testOpenAIStreaming().then(() => {
+  console.log('\nTest completed');
+}).catch(error => {
+  console.error('Test failed:', error);
+});

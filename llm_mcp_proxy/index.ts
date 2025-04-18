@@ -1,11 +1,12 @@
 import 'dotenv/config';
-import Fastify, { FastifyInstance } from 'fastify';
+import Fastify from 'fastify';
 import chatRoutes from './routes/chat';
 import modelsRoutes from './routes/models';
 import mcpRoutes from './routes/mcp';
 import { loadMCPClientByConfig } from './utils/mcp';
 import { initializeMCP } from './providers';
 import { MCPConfig } from './utils/mcp';
+import { Server as HttpServer } from 'http';
 
 export interface ServerConfig {
   port?: number;
@@ -53,9 +54,13 @@ export async function createServer(config: ServerConfig = {}): Promise<Server> {
 }
 
 // 如果直接运行此文件，则启动服务器
-if (require.main === module) {
-  createServer().catch(err => {
-    console.error('Failed to start server:', err);
-    process.exit(1);
-  });
+if (import.meta.url === `file://${process.argv[1]}`) {
+  createServer()
+    .then(server => {
+      console.log('Server is running at', server.url);
+    })
+    .catch(err => {
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    });
 }

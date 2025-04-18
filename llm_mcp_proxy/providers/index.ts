@@ -2,11 +2,13 @@ import { OpenAIProvider } from './openai';
 import { AnthropicProvider } from './anthropic';
 import { DeepSeekProvider } from './deepseek';
 import { OllamaProvider } from './ollama';
+import { OpenAIWithToolProvider } from './openai_with_tool';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { loadMCPClientByConfig, initializeMCPConfig, MCPConfig, updateServerConfig, MCPServerConfig } from '../utils/mcp';
 
-const openai = new OpenAIProvider();
+//const openai = new OpenAIProvider();
+const openai = new OpenAIWithToolProvider();
 const anthropic = new AnthropicProvider();
 const deepseek = new DeepSeekProvider();
 const ollama = new OllamaProvider();

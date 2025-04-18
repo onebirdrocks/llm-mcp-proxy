@@ -3,7 +3,7 @@ import { getLLMProviderByName } from '../providers';
 
 const chatRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/completions', async (request, reply) => {
-    const { provider = 'ollama', model, messages, stream } = request.body as any;
+    const { provider = 'ollama', model, messages, stream, isYolo, mcpServerNames } = request.body as any;
     const authHeader = request.headers.authorization;
     let apiKey: string | undefined;
 
@@ -36,7 +36,7 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
         reply.raw.setHeader('Access-Control-Allow-Origin', '*');
         
         try {
-          await providerHandler.chatStream({ model, messages, apiKey }, reply.raw);
+          await providerHandler.chatStream({ model, messages, apiKey, isYolo, mcpServerNames }, reply.raw);
         } catch (error: any) {
           // 对于流式响应，需要以 SSE 格式发送错误
           const errorEvent = {
@@ -49,7 +49,7 @@ const chatRoutes: FastifyPluginAsync = async (fastify) => {
           reply.raw.end();
         }
       } else {
-        const result = await providerHandler.chat({ model, messages, apiKey });
+        const result = await providerHandler.chat({ model, messages, apiKey, isYolo, mcpServerNames });
         reply.send(result);
       }
     } catch (error: any) {

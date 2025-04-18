@@ -1,5 +1,6 @@
-import { BaseProvider, ChatParams, Message, ListModelsParams } from './types';
+import { BaseProvider, ChatParams, ListModelsParams } from './types';
 import modelsMeta from '../models_meta.json';
+import { ModelMeta } from '../types';
 
 interface OllamaModel {
   name: string;
@@ -130,12 +131,12 @@ export class OllamaProvider implements BaseProvider {
       }
 
       const currentDate = new Date();
-      const ollamaMeta = modelsMeta.ollama || [];
+      const ollamaMeta = (modelsMeta.ollama || []) as ModelMeta[];
 
       return models
         .filter((model: any) => {
           const meta = ollamaMeta.find(m => m.model_id === model.name);
-          return meta?.mode === 'chat' && (!meta.deprecation_date || new Date(meta.deprecation_date) > currentDate);
+          return meta?.mode === 'chat' && (!meta?.deprecation_date || new Date(meta.deprecation_date) > currentDate);
         })
         .map((model: OllamaModel) => {
           const meta = ollamaMeta.find(item => item.model_id === model.name);
