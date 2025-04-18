@@ -33,9 +33,9 @@ export async function createServer(config: ServerConfig = {}): Promise<Server> {
       }
     }
 
-    // 注册路由，不使用前缀，让每个路由模块自己控制完整路径
-    await server.register(chatRoutes);
-    await server.register(modelsRoutes);
+    // 为所有路由添加 /v1 前缀
+    await server.register(chatRoutes, { prefix: '/v1' });
+    await server.register(modelsRoutes, { prefix: '/v1' });
     await server.register(mcpRoutes, { prefix: '/v1' });
 
     await server.listen({ port, host: '0.0.0.0' });

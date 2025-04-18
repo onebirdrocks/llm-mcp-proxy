@@ -40,7 +40,7 @@ function filterDeprecatedModels<T extends ModelMetadata | ModelInfo>(models: T[]
 
 const modelsRoute: FastifyPluginAsync = async (fastify) => {
   // 获取所有模型元数据
-  fastify.get('/v1/models/meta', async (request, reply) => {
+  fastify.get('/models/meta', async (request, reply) => {
     try {
       return modelsMeta;
     } catch (error: any) {
@@ -52,7 +52,7 @@ const modelsRoute: FastifyPluginAsync = async (fastify) => {
   });
 
   // 获取特定提供商的模型元数据
-  fastify.get('/v1/models/meta/:provider', async (request, reply) => {
+  fastify.get('/models/meta/:provider', async (request, reply) => {
     const { provider } = request.params as { provider: string };
     
     try {
@@ -72,7 +72,7 @@ const modelsRoute: FastifyPluginAsync = async (fastify) => {
   });
 
   // 获取所有可用模型列表
-  fastify.get('/v1/models', async (request, reply) => {
+  fastify.get('/models', async (request, reply) => {
     try {
       const results = await Promise.allSettled(
         allProviders.map(p => p.listModels())
@@ -107,7 +107,7 @@ const modelsRoute: FastifyPluginAsync = async (fastify) => {
   });
 
   // 获取特定提供商的可用模型列表
-  fastify.get('/v1/models/:provider', async (request, reply) => {
+  fastify.get('/models/:provider', async (request, reply) => {
     const { provider } = request.params as { provider: string };
     const authHeader = request.headers.authorization;
     let apiKey: string | undefined;

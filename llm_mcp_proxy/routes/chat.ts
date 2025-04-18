@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { getLLMProviderByName } from '../providers';
 
 const chatRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.post('/completions', async (request, reply) => {
+  fastify.post('/chat/completions', async (request, reply) => {
     const { provider = 'ollama', model, messages, stream } = request.body as any;
     const authHeader = request.headers.authorization;
     let apiKey: string | undefined;
