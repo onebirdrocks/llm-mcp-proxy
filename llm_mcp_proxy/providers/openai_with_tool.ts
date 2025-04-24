@@ -44,9 +44,115 @@ interface ToolCallState {
   name: string;
   arguments: string;
   index: number;
+  argumentsComplete: boolean;  // 添加新字段来跟踪参数是否完整
 }
 
 export class OpenAIWithToolProvider implements BaseProvider {
+  private static isPartialJSON(str: string): boolean {
+    try {
+      JSON.parse(str);
+      return true;
+    } catch (e) {
+      // 检查是否是未完成的JSON
+      return str.includes('{') && !str.includes('}') || 
+             (str.split('{').length > str.split('}').length);
+    }
+  }
+
+  private static tryParseJSON(str: string): any {
+    try {
+      return JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  private static cleanAndParseJSON(str: string): any {
+    console.log('开始解析JSON字符串:', str);
+    
+    // 处理空字符串情况
+    if (!str || str.trim() === '') {
+      throw new Error('Empty JSON string');
+    }
+    
+    // 首先尝试直接解析
+    try {
+      const parsed = JSON.parse(str);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed;
+      }
+    } catch (e) {
+      // 继续尝试修复
+    }
+
+    // 如果失败，进行清理和修复
+    try {
+      // 1. 收集所有参数片段
+      let cleaned = str;
+      
+      // 2. 移除所有多余的引号和转义
+      cleaned = cleaned.replace(/\\"/g, '"')
+                      .replace(/^"|"$/g, '')
+                      .replace(/\s+/g, '');
+      
+      // 3. 重建JSON结构
+      if (!cleaned.startsWith('{')) {
+        cleaned = '{' + cleaned;
+      }
+      if (!cleaned.endsWith('}')) {
+        cleaned = cleaned + '}';
+      }
+      
+      // 4. 处理路径参数
+      const pathMatch = cleaned.match(/"path":"([^"]+)"/);
+      if (!pathMatch) {
+        // 如果没有找到path参数，尝试从原始字符串中提取
+        const parts = str.split(/[/\\]+/).filter(Boolean);
+        if (parts.length > 0) {
+          const path = '/' + parts.join('/');
+          cleaned = `{"path":"${path}"}`;
+        } else {
+          throw new Error('No path found in arguments');
+        }
+      }
+      
+      console.log('清理后的JSON字符串:', cleaned);
+      
+      const parsed = JSON.parse(cleaned);
+      if (!parsed.path) {
+        throw new Error('Missing path parameter in parsed JSON');
+      }
+      
+      return parsed;
+    } catch (error) {
+      console.error('JSON清理和解析失败:', {
+        original: str,
+        error
+      });
+      if (error instanceof Error) {
+        throw new Error(`Failed to parse JSON: ${error.message}`);
+      } else {
+        throw new Error('Failed to parse JSON: Unknown error');
+      }
+    }
+  }
+
+  private static extractPathFromMessage(message: string): string | null {
+    // 匹配中文路径模式
+    const pathMatch = message.match(/我的(.*?)中/);
+    if (pathMatch && pathMatch[1]) {
+      return pathMatch[1].trim();
+    }
+    
+    // 匹配普通路径模式
+    const generalPathMatch = message.match(/([/\\][^/\\]+)+/);
+    if (generalPathMatch) {
+      return generalPathMatch[0].replace(/\\/g, '/');
+    }
+    
+    return null;
+  }
+
   async chat(params: ChatParams): Promise<any> {
     const { model, messages: initMsgs, apiKey, isYolo = false, mcpServerNames = [] } = params;
     const openai = new OpenAI({ apiKey });
@@ -222,9 +328,56 @@ export class OpenAIWithToolProvider implements BaseProvider {
       messageCount: initMsgs.length
     });
 
+    let streamEnded = false;
+    const toolResults: { name: string; result: any; tool_call_id: string }[] = [];
+    
     const send = (payload: any) => {
-      console.log('Sending payload:', payload);
-      stream.write(`data: ${JSON.stringify(payload)}\n\n`);
+      if (!streamEnded) {
+        try {
+          stream.write(`data: ${JSON.stringify(payload)}\n\n`);
+        } catch (e) {
+          console.error('Stream write error:', e);
+        }
+      }
+    };
+    
+    const endStream = () => {
+      if (!streamEnded) {
+        try {
+          if (toolResults.length > 0) {
+            console.log('所有工具调用完成，结果:', toolResults);
+            
+            // 添加工具调用结果到消息历史
+            messages.push({
+              role: 'assistant',
+              content: '',
+              tool_calls: toolResults.map(result => ({
+                id: result.tool_call_id,
+                type: 'function',
+                function: {
+                  name: result.name,
+                  arguments: JSON.stringify(result.result)
+                }
+              }))
+            } as ChatCompletionAssistantMessageParam);
+            
+            for (const { name, result, tool_call_id } of toolResults) {
+              messages.push({
+                role: 'tool',
+                name,
+                content: JSON.stringify(result),
+                tool_call_id
+              } as ChatCompletionToolMessageParam);
+            }
+          }
+          
+          stream.write('data: "[DONE]"\n\n');
+          stream.end();
+          streamEnded = true;
+        } catch (e) {
+          console.error('Stream end error:', e);
+        }
+      }
     };
 
     const openai = new OpenAI({ apiKey });
@@ -237,6 +390,7 @@ export class OpenAIWithToolProvider implements BaseProvider {
     });
 
     const mcpClients: MCPClientLike[] = isYolo ? mcpServerNames.map(name => ({
+      name, // 添加name属性
       getToolList: async () => {
         console.log(`Getting tool list for ${name}`);
         const client = await getMCPClientByName(name);
@@ -248,11 +402,22 @@ export class OpenAIWithToolProvider implements BaseProvider {
         console.log(`Got tools for ${name}:`, tools);
         return tools;
       },
-      invokeTool: async (name: string, args: string) => {
-        console.log(`Invoking tool ${name} with args:`, args);
-        const client = await getMCPClientByName(name);
+      invokeTool: async (toolName: string, args: string) => {
+        console.log(`Invoking tool ${toolName} with args:`, args);
+        const client = await getMCPClientByName(name);  // 使用外部的name变量
         if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
-        return client.callTool({ name, arguments: JSON.parse(args) });
+        
+        // 确保args是一个有效的JSON字符串
+        let parsedArgs;
+        try {
+          parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
+          console.log('Parsed arguments:', parsedArgs);
+        } catch (e: any) {
+          console.error('Failed to parse args:', e);
+          throw new Error(`Invalid arguments format: ${e.message}`);
+        }
+        
+        return client.callTool({ name: toolName, arguments: parsedArgs });
       }
     })) : [];
 
@@ -305,7 +470,7 @@ export class OpenAIWithToolProvider implements BaseProvider {
         } catch (error: any) {
           console.error('Error fetching tools:', error);
           send({ type: 'error', message: `Error preparing tools: ${error.message}` });
-          stream.end();
+          endStream();
           return;
         }
       }
@@ -349,7 +514,8 @@ export class OpenAIWithToolProvider implements BaseProvider {
                 id: tc.id,
                 name: tc.function?.name || '',
                 arguments: '',
-                index: tc.index
+                index: tc.index,
+                argumentsComplete: false
               };
               toolCallStates.set(tc.id, state);
               console.log('创建新的工具调用状态:', JSON.stringify(state, null, 2));
@@ -361,12 +527,31 @@ export class OpenAIWithToolProvider implements BaseProvider {
             }
             
             // 累积参数
-            if (tc.function?.arguments !== undefined) {  // 注意这里的改变
-              state.arguments += tc.function.arguments;
+            if (tc.function?.arguments !== undefined) {
+              const newArgs = tc.function.arguments;
+              state.arguments += newArgs;
+              
+              // 检查是否是完整的JSON
+              const isCompleteJSON = (() => {
+                try {
+                  const trimmed = state.arguments.trim();
+                  if (!trimmed) return false;
+                  if (!trimmed.startsWith('{')) return false;
+                  if (!trimmed.endsWith('}')) return false;
+                  JSON.parse(trimmed);
+                  return true;
+                } catch (e) {
+                  return false;
+                }
+              })();
+              
+              state.argumentsComplete = isCompleteJSON;
+              
               console.log(`累积参数 [${tc.id}]:`, {
-                currentChunk: tc.function.arguments,
+                currentChunk: newArgs,
                 accumulatedArgs: state.arguments,
-                chunkLength: tc.function.arguments.length
+                chunkLength: newArgs.length,
+                isCompleteJSON
               });
             }
           }
@@ -381,34 +566,73 @@ export class OpenAIWithToolProvider implements BaseProvider {
               id: state.id,
               name: state.name,
               argumentsLength: state.arguments.length,
-              arguments: state.arguments
+              arguments: state.arguments,
+              isComplete: state.argumentsComplete
             });
             
             try {
-              // 验证参数是否为有效的 JSON
-              if (state.arguments) {
-                JSON.parse(state.arguments);
+              let parsedArgs;
+              
+              // 如果参数不完整或为空，尝试从用户消息中提取路径
+              if (!state.argumentsComplete || !state.arguments.trim()) {
+                const userMessage = messages.find(m => m.role === 'user')?.content;
+                if (userMessage && typeof userMessage === 'string') {
+                  const path = OpenAIWithToolProvider.extractPathFromMessage(userMessage);
+                  if (path) {
+                    parsedArgs = { path };
+                    console.log('从用户消息中提取的路径:', path);
+                  }
+                }
+              } else {
+                // 如果参数完整，使用累积的参数
+                parsedArgs = OpenAIWithToolProvider.cleanAndParseJSON(state.arguments);
               }
               
-              toolCalls.push({
-                id: state.id,
-                name: state.name,
-                type: 'function',
-                function: {
-                  name: state.name,
-                  arguments: state.arguments || '{}'  // 提供默认值
-                },
-                arguments: state.arguments || '{}'
-              });
-            } catch (e) {
+              if (!parsedArgs || !parsedArgs.path) {
+                throw new Error('No valid path found in arguments or user message');
+              }
+              
+              console.log('最终解析的参数:', parsedArgs);
+              
+              // 执行工具调用
+              try {
+                const result = await mcpClients[0].invokeTool(state.name, JSON.stringify(parsedArgs));
+                console.log('工具调用结果:', result);
+                
+                if (!streamEnded) {
+                  send({ type: 'tool_result', name: state.name, result });
+                  toolResults.push({ name: state.name, result, tool_call_id: state.id });
+                }
+              } catch (error) {
+                console.error('工具执行失败:', error);
+                if (!streamEnded) {
+                  if (error instanceof Error) {
+                    send({ type: 'tool_error', message: error.message });
+                  } else {
+                    send({ type: 'tool_error', message: 'Tool execution failed' });
+                  }
+                }
+              }
+            } catch (error) {
               console.error('参数解析失败:', {
                 id: state.id,
-                error: e,
+                error,
                 rawArguments: state.arguments
               });
-              send({ type: 'tool_error', message: 'Invalid JSON arguments' });
+              if (!streamEnded) {
+                if (error instanceof Error) {
+                  send({ type: 'tool_error', message: error.message });
+                } else {
+                  send({ type: 'tool_error', message: 'Failed to parse tool arguments' });
+                }
+              }
             }
           }
+          
+          if (!streamEnded) {
+            endStream();
+          }
+          return;
         }
       }
 
@@ -440,8 +664,6 @@ export class OpenAIWithToolProvider implements BaseProvider {
 
       // 执行工具调用
       try {
-        const toolResults: { name: string; result: any; tool_call_id: string }[] = [];
-
         console.log('准备执行工具调用，可用工具列表:', tools.map(t => t.function.name));
         console.log('MCP 客户端列表:', mcpServerNames);
 
@@ -451,7 +673,7 @@ export class OpenAIWithToolProvider implements BaseProvider {
             argumentsType: typeof c.arguments,
             rawArguments: c.arguments,
             toolId: c.id,
-            rawToolCall: JSON.stringify(c, null, 2)  // 完整的工具调用数据
+            rawToolCall: JSON.stringify(c, null, 2)
           });
 
           if (!c.name) {
@@ -470,43 +692,19 @@ export class OpenAIWithToolProvider implements BaseProvider {
             continue;
           }
 
-          // 在处理工具调用之前，先检查参数是否有效
-          console.log('验证工具调用:', {
-            name: c.name,
-            arguments: c.arguments
-          });
-
-          // // 确保参数不为空
-          // if (!c.arguments || c.arguments === '{}') {
-          //   console.error('工具调用缺少必要参数');
-          //   stream.write(`data: ${JSON.stringify({ 
-          //     type: 'tool_error', 
-          //     message: `Tool ${c.name} requires valid arguments with 'path' parameter` 
-          //   })}\n\n`);
-          //   continue;
-          // }
-
-          // 在查找具体工具的客户端时
-          console.log('查找工具对应的客户端:', {
-            toolName: 'get_all_epub_files',
-            availableClients: mcpClients.map(c => c.name),
-            toolsPerClient: mcpClients.map(c => ({
-              client: c.name,
-              tools: c.getToolList()  // 假设有这个方法
-            }))
-          });
-
-          // 使用正确的 MCP 服务器名称
-          const serverName = mcpServerNames[0] || 'ebook-mcp';  // 使用提供的服务器名或默认值
           try {
-            console.log(`使用 MCP 客户端:`, { 
-              serverName, 
-              toolName: c.name, 
-              args: c.arguments 
+            // 使用第一个可用的MCP客户端
+            if (mcpClients.length === 0) {
+              throw new Error('No MCP clients available');
+            }
+            
+            console.log('Tool call details:', {
+              name: c.name,
+              arguments: c.arguments,
+              parsedArguments: typeof c.arguments === 'string' ? JSON.parse(c.arguments) : c.arguments
             });
             
-            //const result = await mcpClients[0].invokeTool(c.name, c.arguments);
-            const result = await mcpClients[0].invokeTool(c.name, "/Users/onebird/Downloads/");
+            const result = await mcpClients[0].invokeTool(c.name, c.arguments);
             console.log('工具调用成功:', {
               name: c.name,
               result: result
@@ -514,7 +712,7 @@ export class OpenAIWithToolProvider implements BaseProvider {
 
             toolResults.push({ name: c.name, result: result, tool_call_id: c.id });
             stream.write(`data: ${JSON.stringify({ type: 'tool_result', name: c.name, result: result })}\n\n`);
-          } catch (error) {
+          } catch (error: any) {
             console.error('工具调用失败:', {
               error: error.message,
               stack: error.stack
