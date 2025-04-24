@@ -12,7 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
     "resolveJsonModule": true,
-    "sourceMap": true
+    "inlineSourceMap": true
   },
   "include": [
     "llm_mcp_proxy/**/*"

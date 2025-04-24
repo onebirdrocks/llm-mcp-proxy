@@ -33,8 +33,17 @@ interface CustomToolCall {
 }
 
 interface MCPClientLike {
-  getToolList: () => Promise<Array<{ name: string; [key: string]: any }>>;
+  name?: string;  // 添加可选的name属性
+  getToolList: () => Promise<any>;
   invokeTool: (name: string, args: string) => Promise<any>;
+}
+
+// 添加一个新的接口来跟踪工具调用的状态
+interface ToolCallState {
+  id: string;
+  name: string;
+  arguments: string;
+  index: number;
 }
 
 export class OpenAIWithToolProvider implements BaseProvider {
@@ -43,18 +52,29 @@ export class OpenAIWithToolProvider implements BaseProvider {
     const openai = new OpenAI({ apiKey });
     
     // 初始化 MCP 客户端
-    const mcpClients: MCPClientLike[] = isYolo ? mcpServerNames.map(name => ({
-      getToolList: async () => {
+    const mcpClients: MCPClientLike[] = [];
+    if (isYolo && mcpServerNames.length > 0) {
+      console.log('Initializing MCP clients for non-stream mode:', mcpServerNames);
+      
+      for (const name of mcpServerNames) {
         const client = await getMCPClientByName(name);
-        if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
-        return client.listTools();
-      },
-      invokeTool: async (name: string, args: string) => {
-        const client = await getMCPClientByName(name);
-        if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
-        return client.callTool({ name, arguments: JSON.parse(args) });
+        if (!client) {
+          console.error(`Failed to get MCP client for "${name}"`);
+          continue;
+        }
+        mcpClients.push({
+          name,  // 添加name属性以便调试
+          getToolList: async () => {
+            return client.listTools();
+          },
+          invokeTool: async (toolName: string, args: string) => {
+            console.log(`Invoking tool ${toolName} with args:`, args);
+            return client.callTool({ name: toolName, arguments: JSON.parse(args) });
+          }
+        });
+        console.log(`Successfully initialized MCP client for "${name}"`);
       }
-    })) : [];
+    }
 
     let messages = [...initMsgs] as ChatCompletionMessageParam[];
     let loop = 0;
@@ -62,8 +82,10 @@ export class OpenAIWithToolProvider implements BaseProvider {
     while (loop++ < MAX_TOOL_LOOPS) {
       // 获取工具列表
       const tools: ChatCompletionTool[] = [];
+      
       if (isYolo && mcpClients.length > 0) {
         try {
+          console.log('Fetching tools from MCP clients...');
           const toolLists = await Promise.all(mcpClients.map(client => client.getToolList()));
           const allTools = toolLists.flatMap(response => {
             if (typeof response === 'object' && response !== null && 'tools' in response) {
@@ -71,9 +93,15 @@ export class OpenAIWithToolProvider implements BaseProvider {
             }
             return Array.isArray(response) ? response : [];
           });
-
+          
+          console.log('Raw tools from MCP:', JSON.stringify(allTools, null, 2));
+          
           for (const tool of allTools) {
-            if (!tool.name || !tool.inputSchema) continue;
+            if (!tool.name || !tool.inputSchema) {
+              console.warn('Skipping invalid tool:', tool);
+              continue;
+            }
+            
             tools.push({
               type: 'function',
               function: {
@@ -83,7 +111,10 @@ export class OpenAIWithToolProvider implements BaseProvider {
               }
             });
           }
+          
+          console.log('Converted OpenAI tools:', JSON.stringify(tools, null, 2));
         } catch (error: any) {
+          console.error('Error preparing tools:', error);
           throw new Error(`Error preparing tools: ${error.message}`);
         }
       }
@@ -184,30 +215,55 @@ export class OpenAIWithToolProvider implements BaseProvider {
     { model, messages: initMsgs, apiKey, isYolo = false, mcpServerNames = [] }: ChatParams,
     stream: NodeJS.WritableStream,
   ): Promise<void> {
-    const send = (payload: any) =>
+    console.log('Starting chatStream with params:', {
+      model,
+      isYolo,
+      mcpServerNames,
+      messageCount: initMsgs.length
+    });
+
+    const send = (payload: any) => {
+      console.log('Sending payload:', payload);
       stream.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
 
     const openai = new OpenAI({ apiKey });
+    console.log('OpenAI client initialized');
 
-    // ✔️ 尝试复用 MCP Client（只有在需要时才实例化）
-    console.log('isYolo', isYolo);
-    console.log('mcpServerNames', mcpServerNames);
+    // ✔️ 尝试复用 MCP Client
+    console.log('Initializing MCP clients:', {
+      isYolo,
+      mcpServerNames
+    });
+
     const mcpClients: MCPClientLike[] = isYolo ? mcpServerNames.map(name => ({
       getToolList: async () => {
+        console.log(`Getting tool list for ${name}`);
         const client = await getMCPClientByName(name);
-        if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
-        return client.listTools();
+        if (!client) {
+          console.error(`Failed to get MCP client for "${name}"`);
+          throw new Error(`Failed to get MCP client for "${name}"`);
+        }
+        const tools = await client.listTools();
+        console.log(`Got tools for ${name}:`, tools);
+        return tools;
       },
       invokeTool: async (name: string, args: string) => {
+        console.log(`Invoking tool ${name} with args:`, args);
         const client = await getMCPClientByName(name);
         if (!client) throw new Error(`Failed to get MCP client for "${name}"`);
         return client.callTool({ name, arguments: JSON.parse(args) });
       }
     })) : [];
 
+    console.log('MCP clients initialized:', mcpClients.length);
+
     let loop = 0;
     let messages = [...initMsgs] as ChatCompletionMessageParam[]; // 每次循环都累加上下文
 
+    // 用于跟踪工具调用的状态
+    const toolCallStates = new Map<string, ToolCallState>();
+    
     while (loop++ < MAX_TOOL_LOOPS) {
       const reqStartTs = Date.now();
 
@@ -268,35 +324,91 @@ export class OpenAIWithToolProvider implements BaseProvider {
         } : {})
       });
 
+      console.log('tools:', tools);
       // ⬇️ 用于暂存本轮 tool 调用
       const toolCalls: CustomToolCall[] = [];
       let finishedWithToolCalls = false;
 
       // 2️⃣ 逐块解析 & 透传 token
       for await (const chunk of resp) {
-        // 直接转发原始数据
+        // 调试日志
+        console.log('收到chunk:', JSON.stringify(chunk, null, 2));
+        
         stream.write(`data: ${JSON.stringify(chunk)}\n\n`);
-
-        // 处理工具调用
-        if (chunk.choices[0]?.delta?.tool_calls) {
-          const toolCallsData = chunk.choices[0].delta.tool_calls;
-          const customToolCalls = toolCallsData.map((tc: any) => ({
-            id: tc.id || `tool_${Date.now()}`,
-            type: 'function' as const,
-            name: tc.function?.name,
-            arguments: tc.function?.arguments,
-            function: {
-              name: tc.function?.name,
-              arguments: tc.function?.arguments
+        
+        const delta = chunk.choices[0]?.delta;
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            console.log('处理工具调用片段:', JSON.stringify(tc, null, 2));
+            
+            if (!tc.id) continue;
+            
+            let state = toolCallStates.get(tc.id);
+            if (!state) {
+              state = {
+                id: tc.id,
+                name: tc.function?.name || '',
+                arguments: '',
+                index: tc.index
+              };
+              toolCallStates.set(tc.id, state);
+              console.log('创建新的工具调用状态:', JSON.stringify(state, null, 2));
             }
-          }));
-          
-          toolCalls.push(...customToolCalls);
+            
+            // 更新函数名
+            if (tc.function?.name) {
+              state.name = tc.function.name;
+            }
+            
+            // 累积参数
+            if (tc.function?.arguments !== undefined) {  // 注意这里的改变
+              state.arguments += tc.function.arguments;
+              console.log(`累积参数 [${tc.id}]:`, {
+                currentChunk: tc.function.arguments,
+                accumulatedArgs: state.arguments,
+                chunkLength: tc.function.arguments.length
+              });
+            }
+          }
         }
 
-        // 检查完成原因
         if (chunk.choices[0]?.finish_reason === 'tool_calls') {
           finishedWithToolCalls = true;
+          
+          // 转换累积的状态为工具调用
+          for (const state of toolCallStates.values()) {
+            console.log('工具调用完成:', {
+              id: state.id,
+              name: state.name,
+              argumentsLength: state.arguments.length,
+              arguments: state.arguments
+            });
+            
+            try {
+              // 验证参数是否为有效的 JSON
+              if (state.arguments) {
+                JSON.parse(state.arguments);
+              }
+              
+              toolCalls.push({
+                id: state.id,
+                name: state.name,
+                type: 'function',
+                function: {
+                  name: state.name,
+                  arguments: state.arguments || '{}'  // 提供默认值
+                },
+                arguments: state.arguments || '{}'
+              });
+            } catch (e) {
+              console.error('参数解析失败:', {
+                id: state.id,
+                error: e,
+                rawArguments: state.arguments
+              });
+              send({ type: 'tool_error', message: 'Invalid JSON arguments' });
+            }
+          }
         }
       }
 
@@ -319,6 +431,13 @@ export class OpenAIWithToolProvider implements BaseProvider {
         return;
       }
 
+      // 在工具执行之前
+      console.log('当前MCP客户端状态:', {
+        clientsCount: mcpClients.length,
+        clientNames: mcpClients.map(c => c.name),
+        requestedServer: mcpServerNames
+      });
+
       // 执行工具调用
       try {
         const toolResults: { name: string; result: any; tool_call_id: string }[] = [];
@@ -329,9 +448,10 @@ export class OpenAIWithToolProvider implements BaseProvider {
         for (const c of toolCalls) {
           console.log('\n开始处理工具调用:', {
             toolName: c.name,
-            toolArguments: c.arguments,
+            argumentsType: typeof c.arguments,
+            rawArguments: c.arguments,
             toolId: c.id,
-            rawToolCall: JSON.stringify(c, null, 2)  // 添加原始工具调用数据
+            rawToolCall: JSON.stringify(c, null, 2)  // 完整的工具调用数据
           });
 
           if (!c.name) {
@@ -341,82 +461,52 @@ export class OpenAIWithToolProvider implements BaseProvider {
           }
 
           if (!c.arguments || typeof c.arguments !== 'string') {
-            console.error('工具调用参数无效:', {
+            console.error('工具参数无效:', {
               name: c.name,
+              argumentsType: typeof c.arguments,
               arguments: c.arguments
             });
             stream.write(`data: ${JSON.stringify({ type: 'tool_error', message: 'Invalid tool arguments' })}\n\n`);
             continue;
           }
 
-          const meta = tools.find(t => t.function.name === c.name);
-          if (!meta) {
-            console.error('工具未找到:', {
-              requestedTool: c.name,
-              availableTools: tools.map(t => t.function.name)
-            });
-            stream.write(`data: ${JSON.stringify({ type: 'tool_error', name: c.name, message: 'Tool not found on any MCP server' })}\n\n`);
-            continue;
-          }
-
-          console.log('找到工具元数据:', {
-            name: meta.function.name,
-            description: meta.function.description,
-            parameters: meta.function.parameters
+          // 在处理工具调用之前，先检查参数是否有效
+          console.log('验证工具调用:', {
+            name: c.name,
+            arguments: c.arguments
           });
 
+          // // 确保参数不为空
+          // if (!c.arguments || c.arguments === '{}') {
+          //   console.error('工具调用缺少必要参数');
+          //   stream.write(`data: ${JSON.stringify({ 
+          //     type: 'tool_error', 
+          //     message: `Tool ${c.name} requires valid arguments with 'path' parameter` 
+          //   })}\n\n`);
+          //   continue;
+          // }
+
+          // 在查找具体工具的客户端时
+          console.log('查找工具对应的客户端:', {
+            toolName: 'get_all_epub_files',
+            availableClients: mcpClients.map(c => c.name),
+            toolsPerClient: mcpClients.map(c => ({
+              client: c.name,
+              tools: c.getToolList()  // 假设有这个方法
+            }))
+          });
+
+          // 使用正确的 MCP 服务器名称
+          const serverName = mcpServerNames[0] || 'ebook-mcp';  // 使用提供的服务器名或默认值
           try {
-            const clientIndex = tools.findIndex(t => t.function.name === c.name);
-            
-            if (clientIndex === -1 || clientIndex >= mcpClients.length) {
-              console.error('找不到对应的 MCP 客户端:', {
-                toolName: c.name,
-                clientIndex,
-                availableClients: mcpServerNames
-              });
-              stream.write(`data: ${JSON.stringify({ 
-                type: 'tool_error', 
-                message: `No MCP client available for tool "${c.name}"` 
-              })}\n\n`);
-              continue;
-            }
-
-            console.log('使用 MCP 客户端:', {
-              serverName: mcpServerNames[clientIndex],
-              toolName: c.name,
-              args: c.arguments
+            console.log(`使用 MCP 客户端:`, { 
+              serverName, 
+              toolName: c.name, 
+              args: c.arguments 
             });
-
-            // 验证参数
-            if (!c.arguments || typeof c.arguments !== 'string') {
-              console.error('工具参数无效:', {
-                toolName: c.name,
-                args: c.arguments
-              });
-              stream.write(`data: ${JSON.stringify({
-                type: 'tool_error',
-                message: `Invalid arguments for tool "${c.name}": arguments must be a string`
-              })}\n\n`);
-              continue;
-            }
-
-            let parsedArgs;
-            try {
-              parsedArgs = JSON.parse(c.arguments);
-            } catch (e) {
-              console.error('工具参数解析失败:', {
-                toolName: c.name,
-                args: c.arguments,
-                error: e
-              });
-              stream.write(`data: ${JSON.stringify({
-                type: 'tool_error',
-                message: `Failed to parse arguments for tool "${c.name}": ${(e as Error).message}`
-              })}\n\n`);
-              continue;
-            }
-
-            const result = await mcpClients[clientIndex].invokeTool(c.name, JSON.stringify(parsedArgs));
+            
+            //const result = await mcpClients[0].invokeTool(c.name, c.arguments);
+            const result = await mcpClients[0].invokeTool(c.name, "/Users/onebird/Downloads/");
             console.log('工具调用成功:', {
               name: c.name,
               result: result
@@ -424,12 +514,12 @@ export class OpenAIWithToolProvider implements BaseProvider {
 
             toolResults.push({ name: c.name, result: result, tool_call_id: c.id });
             stream.write(`data: ${JSON.stringify({ type: 'tool_result', name: c.name, result: result })}\n\n`);
-          } catch (e: any) {
+          } catch (error) {
             console.error('工具调用失败:', {
-              error: e.message,
-              stack: e.stack
+              error: error.message,
+              stack: error.stack
             });
-            stream.write(`data: ${JSON.stringify({ type: 'tool_error', message: e.message })}\n\n`);
+            stream.write(`data: ${JSON.stringify({ type: 'tool_error', message: error.message })}\n\n`);
           }
         }
 
@@ -464,4 +554,20 @@ export class OpenAIWithToolProvider implements BaseProvider {
       stream.write(`data: ${JSON.stringify({ type: 'loop_info', loop, duration })}\n\n`);
     }
   }
+}
+
+// 修改 invokeTool 函数
+async function invokeTool(serverName: string, toolName: string, args: string): Promise<any> {
+  const client = await getMCPClientByName(serverName);
+  if (!client) {
+    throw new Error(`Failed to get MCP client for "${serverName}"`);
+  }
+
+  const parsedArgs = JSON.parse(args);
+  if (!parsedArgs.path) {
+    throw new Error(`Tool ${toolName} requires 'path' parameter`);
+  }
+
+  console.log(`Invoking tool ${toolName} with args:`, parsedArgs);
+  return await client.callTool({ name: toolName, arguments: parsedArgs });  // 使用 callTool 替代 invokeTool
 }

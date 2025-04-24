@@ -107,7 +107,7 @@ export class DeepSeekProvider implements BaseProvider {
     });
     return models.map((item: ModelMeta) => ({
       id: item.model_id,
-      provider: 'deepseek'
-    }));
+        provider: 'deepseek'
+      }));
   }
 }
