@@ -117,40 +117,43 @@ export class OllamaProvider implements BaseProvider {
 
   async listModels(params?: ListModelsParams) {
     try {
+      console.log('Initializing Ollama client...');
       await this.initialize();
-      const response = await this.client.list();
       
-      // 添加调试日志
-      console.log('Ollama response:', JSON.stringify(response, null, 2));
-
+      console.log('Calling Ollama list API...');
+      const response = await this.client.list();
+      console.log('Raw Ollama API response:', response);
+      
       const models = Array.isArray(response.models) ? response.models : response;
+      console.log('Parsed models before processing:', models);
       
       if (!Array.isArray(models)) {
         console.error('Unexpected response format from Ollama:', models);
         throw new Error('Invalid response format from Ollama');
       }
 
-      const currentDate = new Date();
       const ollamaMeta = (modelsMeta.ollama || []) as ModelMeta[];
+      console.log('Available Ollama meta:', ollamaMeta);
 
-      return models
-        .filter((model: any) => {
-          const meta = ollamaMeta.find(m => m.model_id === model.name);
-          return meta?.mode === 'chat' && (!meta?.deprecation_date || new Date(meta.deprecation_date) > currentDate);
-        })
-        .map((model: OllamaModel) => {
-          const meta = ollamaMeta.find(item => item.model_id === model.name);
-          return {
-            id: model.name,
-            provider: 'ollama',
-            ...meta
-          };
-        });
+      const result = models.map((model: OllamaModel) => ({
+        id: model.name,
+        provider: 'ollama'
+      }));
+      
+      console.log('Final processed models:', result);
+      return result;
+      
     } catch (error: any) {
+      console.error('Full error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        code: error.code
+      });
+      
       if (error.code === 'ECONNREFUSED') {
         throw new Error('Failed to connect to Ollama server. Please make sure Ollama is running on port 11434');
       }
-      console.error('Error fetching models from Ollama:', error);
       throw error;
     }
   }
